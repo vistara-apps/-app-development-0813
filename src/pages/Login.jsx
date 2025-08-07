@@ -161,7 +161,7 @@ export default function Login() {
                 disabled={isLoading}
               >
                 {isLoading ? 'Signing in...' : 'Sign in'}
-              </button>
+              </Button>
             </div>
           </form>
         </div>
