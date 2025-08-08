@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react'
+import ApiService from '../services/api'
 
 const AppContext = createContext()
 
@@ -7,15 +8,19 @@ const initialState = {
   projects: [],
   agents: [],
   workflows: [],
+  tools: [],
   auditLogs: [],
   isAuthenticated: false,
-  loading: false
+  loading: false,
+  backendConnected: false
 }
 
 function appReducer(state, action) {
   switch (action.type) {
     case 'SET_LOADING':
       return { ...state, loading: action.payload }
+    case 'SET_BACKEND_CONNECTED':
+      return { ...state, backendConnected: action.payload }
     case 'SET_USER':
       return { ...state, user: action.payload, isAuthenticated: !!action.payload }
     case 'SET_PROJECTS':
@@ -37,6 +42,8 @@ function appReducer(state, action) {
       return { ...state, workflows: action.payload }
     case 'ADD_WORKFLOW':
       return { ...state, workflows: [...state.workflows, action.payload] }
+    case 'SET_TOOLS':
+      return { ...state, tools: action.payload }
     case 'ADD_AUDIT_LOG':
       return { ...state, auditLogs: [action.payload, ...state.auditLogs] }
     case 'LOGOUT':
@@ -50,6 +57,29 @@ export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
 
   useEffect(() => {
+    // Initialize backend connection
+    const initializeBackend = async () => {
+      try {
+        dispatch({ type: 'SET_LOADING', payload: true })
+        
+        // Test backend connection
+        const toolsData = await ApiService.listTools()
+        const agentsData = await ApiService.listAgents()
+        
+        dispatch({ type: 'SET_TOOLS', payload: toolsData || [] })
+        dispatch({ type: 'SET_BACKEND_CONNECTED', payload: true })
+        
+        console.log('Backend connected successfully')
+        addAuditLog('BACKEND_CONNECTED', 'System', 'Z Framework backend')
+      } catch (error) {
+        console.warn('Backend connection failed, using mock data:', error)
+        dispatch({ type: 'SET_BACKEND_CONNECTED', payload: false })
+        addAuditLog('BACKEND_CONNECTION_FAILED', 'System', 'Using mock data')
+      } finally {
+        dispatch({ type: 'SET_LOADING', payload: false })
+      }
+    }
+
     // Initialize with mock data
     const mockUser = {
       id: 1,
@@ -174,6 +204,9 @@ export function AppProvider({ children }) {
     dispatch({ type: 'SET_PROJECTS', payload: mockProjects })
     dispatch({ type: 'SET_AGENTS', payload: mockAgents })
     dispatch({ type: 'SET_WORKFLOWS', payload: mockWorkflows })
+    
+    // Initialize backend
+    initializeBackend()
   }, [])
 
   const login = (credentials) => {
@@ -247,6 +280,82 @@ export function AppProvider({ children }) {
     dispatch({ type: 'ADD_AUDIT_LOG', payload: log })
   }
 
+  // Backend integration functions
+  const createAgent = async (agentData) => {
+    try {
+      dispatch({ type: 'SET_LOADING', payload: true })
+      
+      if (state.backendConnected) {
+        const result = await ApiService.saveAgent(agentData)
+        // Refresh agents list
+        const updatedAgents = await ApiService.listAgents()
+        dispatch({ type: 'SET_AGENTS', payload: updatedAgents })
+        addAuditLog('CREATE_AGENT', 'User', agentData.name)
+        return result
+      } else {
+        // Fallback to local state
+        const newAgent = {
+          ...agentData,
+          id: Date.now(),
+          status: 'Active'
+        }
+        dispatch({ type: 'ADD_AGENT', payload: newAgent })
+        addAuditLog('CREATE_AGENT', 'User', agentData.name)
+        return newAgent
+      }
+    } catch (error) {
+      console.error('Failed to create agent:', error)
+      addAuditLog('CREATE_AGENT_FAILED', 'System', error.message)
+      throw error
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false })
+    }
+  }
+
+  const executeAgent = async (agentData) => {
+    try {
+      dispatch({ type: 'SET_LOADING', payload: true })
+      
+      if (state.backendConnected) {
+        const result = await ApiService.executeAgent(agentData)
+        addAuditLog('EXECUTE_AGENT', 'User', agentData.agent_id)
+        return result
+      } else {
+        // Mock execution for development
+        const result = {
+          status: 'success',
+          result: 'Mock execution completed',
+          agent_id: agentData.agent_id
+        }
+        addAuditLog('EXECUTE_AGENT', 'User', agentData.agent_id)
+        return result
+      }
+    } catch (error) {
+      console.error('Failed to execute agent:', error)
+      addAuditLog('EXECUTE_AGENT_FAILED', 'System', error.message)
+      throw error
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false })
+    }
+  }
+
+  const searchTools = async (query) => {
+    try {
+      if (state.backendConnected) {
+        return await ApiService.searchTools(query)
+      } else {
+        // Mock search
+        return state.tools.filter(tool => 
+          tool.name?.toLowerCase().includes(query.toLowerCase()) ||
+          tool.description?.toLowerCase().includes(query.toLowerCase())
+        )
+      }
+    } catch (error) {
+      console.error('Failed to search tools:', error)
+      return []
+    }
+  }
+
   const value = {
     ...state,
     login,
@@ -254,7 +363,10 @@ export function AppProvider({ children }) {
     createProject,
     addTask,
     updateTaskStatus,
-    addAuditLog
+    addAuditLog,
+    createAgent,
+    executeAgent,
+    searchTools
   }
 
   return (
